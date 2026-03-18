@@ -1,0 +1,14 @@
+executor: slurm
+jobs: 100
+latency-wait: 120
+rerun-incomplete: true
+printshellcmds: true
+use-singularity: true
+
+default-resources:
+  - mem_mb=4000
+  - runtime=60
+  - tmpdir="/tmp"
+
+set-threads:
+  split_bam: 4

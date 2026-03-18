@@ -1,0 +1,3 @@
+cell_ids : "test/Cell_IDs.tsv"
+bamfile: "test/possorted_genome_bam.bam"
+outdir: "results"
