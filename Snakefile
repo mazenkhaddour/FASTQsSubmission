@@ -59,7 +59,8 @@ rule split_bam:
     shell:
         r"""
         mkdir -p $(dirname {output.out_bam})
-        export TMPDIR=/tmp
+        mkdir -p .tmp_subset
+        export TMPDIR=.tmp_subset
         subset-bam \
           --bam {input.bamfile} \
           --cell-barcodes {input.barcode_file} \
@@ -99,7 +100,6 @@ rule convert_to_fastq:
         touch "{output.done}"
         """
 rule merge_lanes:
-
     input:
         fastq_dir=f"{config['outdir']}/FASTQs/{{genotype}}"
     output:
