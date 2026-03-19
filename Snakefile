@@ -67,6 +67,9 @@ rule split_bam:
           --out-bam {output.out_bam} \
           --cores {threads}
         """
+
+
+        #############
 rule convert_to_fastq:
     input:
         bam=f"{config['outdir']}/subset_bams/{{genotype}}.bam"
@@ -77,58 +80,47 @@ rule convert_to_fastq:
         outroot=f"{config['outdir']}/FASTQs"
     singularity:
         "docker://quay.io/biocontainers/10x_bamtofastq:1.4.1"
+    threads: 4
+    resources:
+        runtime=60,
+        mem_mb=16000
     shell:
         r"""
         set -euo pipefail
 
-        mkdir -p {params.outroot}
+        mkdir -p "{params.outroot}"
+        rm -rf "{output.fastq_dir}"
 
-        tmpdir="{params.outroot}/.tmp_bamtofastq_{wildcards.genotype}"
-        rm -rf "$tmpdir" "{output.fastq_dir}"
+        bamtofastq "{input.bam}" "{output.fastq_dir}"
 
-        # IMPORTANT: do NOT mkdir "$tmpdir" — bamtofastq must create it
-        bamtofastq "{input.bam}" "$tmpdir"
-
-        # bamtofastq creates the directory we asked for; use it as the produced dir
-        if [ ! -d "$tmpdir" ]; then
-          echo "ERROR: bamtofastq did not create $tmpdir" >&2
-          ls -la {params.outroot} >&2 || true
-          exit 1
-        fi
-
-        mv "$tmpdir" "{output.fastq_dir}"
+        test -d "{output.fastq_dir}"
         touch "{output.done}"
         """
-rule merge_lanes:
+
+
+
+
+###########
+rule merge_and_rename_fastqs:
     input:
-        fastq_dir=f"{config['outdir']}/FASTQs/{{genotype}}"
-    output:
-        r1=f"{config['outdir']}/FASTQs/{{genotype}}/merged_R1.fastq.gz",
-        r2=f"{config['outdir']}/FASTQs/{{genotype}}/merged_R2.fastq.gz"
-    shell:
-        r"""
-        set -euo pipefail
-
-        sample_dir="$(find {input.fastq_dir} -mindepth 1 -maxdepth 3 -type d -name 'Sample_*' | head -n 1)"
-
-        r1s=$(ls "$sample_dir"/bamtofastq_*_R1_001.fastq.gz | sort -V)
-        r2s=$(ls "$sample_dir"/bamtofastq_*_R2_001.fastq.gz | sort -V)
-
-        cat $r1s > {output.r1}
-        cat $r2s > {output.r2}
-        """
-rule rename_fastqs:
-    input:
-        r1=f"{config['outdir']}/FASTQs/{{genotype}}/merged_R1.fastq.gz",
-        r2=f"{config['outdir']}/FASTQs/{{genotype}}/merged_R2.fastq.gz",
         fastq_dir=f"{config['outdir']}/FASTQs/{{genotype}}"
     output:
         r1=f"{config['outdir']}/FASTQs/{{genotype}}/{{genotype}}_R1.fastq.gz",
         r2=f"{config['outdir']}/FASTQs/{{genotype}}/{{genotype}}_R2.fastq.gz"
+    threads: 4
+    resources:
+        mem_mb=8000,
+        runtime=60
     shell:
         r"""
         set -euo pipefail
 
-        mv {input.r1} {output.r1}
-        mv {input.r2} {output.r2}
+        r1_files=$(find "{input.fastq_dir}" -type f -name 'bamtofastq_*_R1_*.fastq.gz' | sort -V)
+        r2_files=$(find "{input.fastq_dir}" -type f -name 'bamtofastq_*_R2_*.fastq.gz' | sort -V)
+
+        [ -n "$r1_files" ] || {{ echo "No R1 FASTQs found under {input.fastq_dir}" >&2; exit 1; }}
+        [ -n "$r2_files" ] || {{ echo "No R2 FASTQs found under {input.fastq_dir}" >&2; exit 1; }}
+
+        cat $r1_files > "{output.r1}"
+        cat $r2_files > "{output.r2}"
         """
