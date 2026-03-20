@@ -3,6 +3,7 @@ from snakemake.io import glob_wildcards
 from snakemake.io import directory
 
 configfile: "config.yaml"
+
 def final_outputs(wildcards):
     gts = discovered_genotypes(wildcards)
     return expand(f"{config['outdir']}/FASTQs/{{genotype}}/{{genotype}}_R1.fastq.gz", genotype=gts) + \
@@ -13,10 +14,11 @@ rule all:
     input:
         final_outputs
     default_target: True
+
 wildcard_constraints:
     genotype="[^/]+"
 
-# 1) Checkpoint: create barcode files
+
 checkpoint make_barcodes:
     input:
         tsv=config["cell_ids"]
@@ -28,10 +30,10 @@ checkpoint make_barcodes:
         "docker://mazenkhaddour/demux-script:latest"
     shell:
         r"""
-        python3 scripts/handlingTables.py -i {input.tsv} -o {params.outdir}
+        python3 scripts/handlingTables.py -i "{input.tsv}" -o "{params.outdir}"
         """
 
-# 2) Helper: list genotypes after checkpoint runs
+
 def discovered_genotypes(wildcards):
     ckpt = checkpoints.make_barcodes.get(**wildcards)
     barcode_dir = os.path.dirname(ckpt.output.done)
@@ -41,8 +43,6 @@ def discovered_genotypes(wildcards):
     return gts
 
 
-
-# 4) Split BAM per genotype
 rule split_bam:
     input:
         bamfile=config["bamfile"],
@@ -58,21 +58,54 @@ rule split_bam:
         "docker://johnyaku/subset-bam:1.1.0"
     shell:
         r"""
-        mkdir -p $(dirname {output.out_bam})
+        set -euo pipefail
+
+        mkdir -p "$(dirname "{output.out_bam}")"
         mkdir -p .tmp_subset
         export TMPDIR=.tmp_subset
+
         subset-bam \
-          --bam {input.bamfile} \
-          --cell-barcodes {input.barcode_file} \
-          --out-bam {output.out_bam} \
+          --bam "{input.bamfile}" \
+          --cell-barcodes "{input.barcode_file}" \
+          --out-bam "{output.out_bam}" \
           --cores {threads}
         """
 
-
-        #############
-rule convert_to_fastq:
+rule remove_chrY:
     input:
         bam=f"{config['outdir']}/subset_bams/{{genotype}}.bam"
+    output:
+        bam=f"{config['outdir']}/subset_bams_noY/{{genotype}}.bam"
+    threads: 4
+    resources:
+        mem_mb=16000,
+        runtime=120
+    singularity:
+        "docker://quay.io/biocontainers/samtools:1.22--h96c455f_0"
+    shell:
+        r"""
+        set -euo pipefail
+
+        mkdir -p "$(dirname "{output.bam}")"
+
+        if [[ "{wildcards.genotype}" == *KOLF* || "{wildcards.genotype}" == *CTL08* ]]; then
+            echo "Removing chrY from {wildcards.genotype}"
+
+            samtools index -@ {threads} "{input.bam}"
+            refs=$(samtools idxstats "{input.bam}" | cut -f1 | grep -v -E '^chrY$|^Y$' | grep -v '^\*$' | tr '\n' ' ')
+
+            samtools view -@ {threads} -b "{input.bam}" $refs -o "{output.bam}"
+            samtools quickcheck "{output.bam}"
+        else
+            echo "Keeping BAM unchanged for {wildcards.genotype}"
+            ln -sf "$(realpath "{input.bam}")" "{output.bam}"
+        fi
+        """
+
+
+rule convert_to_fastq:
+    input:
+        bam=f"{config['outdir']}/subset_bams_noY/{{genotype}}.bam"
     output:
         fastq_dir=directory(f"{config['outdir']}/FASTQs/{{genotype}}"),
         done=touch(f"{config['outdir']}/FASTQs/{{genotype}}/.done")
@@ -98,9 +131,6 @@ rule convert_to_fastq:
         """
 
 
-
-
-###########
 rule merge_and_rename_fastqs:
     input:
         fastq_dir=f"{config['outdir']}/FASTQs/{{genotype}}"
@@ -118,8 +148,8 @@ rule merge_and_rename_fastqs:
         r1_files=$(find "{input.fastq_dir}" -type f -name 'bamtofastq_*_R1_*.fastq.gz' | sort -V)
         r2_files=$(find "{input.fastq_dir}" -type f -name 'bamtofastq_*_R2_*.fastq.gz' | sort -V)
 
-        [ -n "$r1_files" ] || {{ echo "No R1 FASTQs found under {input.fastq_dir}" >&2; exit 1; }}
-        [ -n "$r2_files" ] || {{ echo "No R2 FASTQs found under {input.fastq_dir}" >&2; exit 1; }}
+        [ -n "$r1_files" ] || { echo "No R1 FASTQs found under {input.fastq_dir}" >&2; exit 1; }
+        [ -n "$r2_files" ] || { echo "No R2 FASTQs found under {input.fastq_dir}" >&2; exit 1; }
 
         cat $r1_files > "{output.r1}"
         cat $r2_files > "{output.r2}"
