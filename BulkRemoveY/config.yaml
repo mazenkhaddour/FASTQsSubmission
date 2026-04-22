@@ -1,0 +1,32 @@
+outdir: "result/"
+
+#STAR Index Config 
+singularity_image: "docker://testalab/snpcall:1.2.0"
+
+
+
+
+
+reference_files:
+
+    # gencode human v35 dataset
+    gencode_human_35:
+        species: "hsapiens"
+        genome: "/project/testa_raw_data/references/gencode/human-v35/GRCh38.p13.genome.fa.gz"
+        annotation: "/project/testa_raw_data/references/gencode/human-v35/gencode.v35.annotation.gtf.gz"
+        transcript: "/project/testa_raw_data/references/gencode/human-v35/gencode.v35.transcripts.fa.gz"
+        transcript2gene: "/project/testa_raw_data/references/gencode/human-v35/gencode.v35.transcript2gene"
+        salmonpath: "/project/testa_raw_data/references/gencode/human-v35/salmon_index"
+        starpath: "/project/testa_raw_data/references/gencode/human-v35/star"
+        bwapath: "/project/testa_raw_data/references/gencode/human-v35/bwa"
+        mkrefpath: "/project/testa_raw_data/references/gencode/human-v35/mkref/"
+        bowtiepath: "/project/testa_raw_data/references/gencode/human-v35/bowtie"
+        vdjrefpath: ""
+        decoytranscript: "/project/testa_raw_data/references/gencode/human-v35/decoy/gencode.v35.decoy-transcripts.fa.gz"
+        decoytxt: "/project/testa_raw_data/references/gencode/human-v35/decoy/decoys.txt"
+        decoyindexpath: "/project/testa_raw_data/references/gencode/human-v35/decoy/decoy_salmon_index"
+        decoytranscript2gene: "/project/testa_raw_data/references/gencode/human-v35/decoy/gencode.v35.decoy-transcript2gene"
+        snpdatabase: "/project/testa_raw_data/references/snp_database/ensembl_adapted.vcf"
+        cnvblacklist: "/project/testa_raw_data/references/encode/hg38-blacklist.v2.bed"
+        mappability: "/project/testa_raw_data/references/gencode/human-v35/mappability"
+

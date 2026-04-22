@@ -1,0 +1,122 @@
+import os
+import pandas as pd
+
+configfile: "config.yaml"
+
+# Load samples
+samples_df = pd.read_csv("input.csv")
+SAMPLES = samples_df["sample"].tolist()
+SAMPLE_DICT = samples_df.set_index("sample").to_dict(orient="index")
+
+# Paths
+OUTDIR = config.get("outdir", "result")
+ALIGN_PATH = os.path.join(OUTDIR, "align")
+CONTAINER_IMAGE = config.get("singularity_image", "docker://testalab/snpcall:1.2.0")
+
+# Reference paths
+STAR_INDEX_DIR = config["reference_files"]["gencode_human_35"]["starpath"]
+
+rule all:
+    input:
+        expand(os.path.join(OUTDIR, "fastq_NoY", "{sample}_R1.fastq.gz"), sample=SAMPLES),
+        expand(os.path.join(OUTDIR, "fastq_NoY", "{sample}_R2.fastq.gz"), sample=SAMPLES)
+
+##################################################################
+# 1. Align Reads (STAR)
+##################################################################
+rule star_align:
+    input:
+        r1 = lambda wildcards: SAMPLE_DICT[wildcards.sample]['fastq_R1'],
+        r2 = lambda wildcards: SAMPLE_DICT[wildcards.sample]['fastq_R2'],
+        index = STAR_INDEX_DIR
+    output:
+        # Using temp() deletes this huge file once remove_chrY is done
+        bam = temp(os.path.join(ALIGN_PATH, "{sample}_Aligned.sortedByCoord.out.bam")),
+        counts = os.path.join(ALIGN_PATH, "{sample}_ReadsPerGene.out.tab")
+    threads: 12
+    resources:
+        mem_mb = 35000,
+        runtime = 120
+    container: CONTAINER_IMAGE
+    params:
+        prefix = os.path.join(ALIGN_PATH, "{sample}_")
+    shell:
+        """
+        mkdir -p {ALIGN_PATH}
+        STAR --runThreadN {threads} \
+             --genomeDir {input.index} \
+             --readFilesIn {input.r1} {input.r2} \
+             --readFilesCommand zcat \
+             --outFileNamePrefix {params.prefix} \
+             --outSAMtype BAM SortedByCoordinate \
+             --quantMode GeneCounts \
+             --limitBAMsortRAM 30000000000
+        """
+
+##################################################################
+# 2. Discard Chromosome Y
+##################################################################
+rule remove_chrY:
+    input:
+        bam = os.path.join(ALIGN_PATH, "{sample}_Aligned.sortedByCoord.out.bam"),
+        bai = os.path.join(ALIGN_PATH, "{sample}_Aligned.sortedByCoord.out.bam.bai")
+    output:
+        bam = os.path.join(ALIGN_PATH, "{sample}_NoY.bam")
+    threads: 8
+    resources:
+        mem_mb = 8000,
+        runtime = 60
+    container: CONTAINER_IMAGE
+    shell:
+        """
+        # Get all chromosome names EXCEPT chrY
+        CHRS=$(samtools view -H {input.bam} | grep "^@SQ" | cut -f2 | sed 's/SN://' | grep -v -w "chrY")
+        
+        # Extract everything in $CHRS (this naturally drops unmapped reads)
+        samtools view -@ {threads} -b -h {input.bam} $CHRS > {output.bam}
+        """
+
+##################################################################
+# 3. Generic Samtools Indexing
+##################################################################
+rule samtools_index:
+    input:
+        "{prefix}.bam"
+    output:
+        "{prefix}.bam.bai"
+    threads: 4
+    resources:
+        mem_mb = 4000,
+        runtime = 30
+    container: CONTAINER_IMAGE
+    shell:
+        "samtools index -@ {threads} {input}"
+
+rule bam_to_fastq:
+    input:
+        bam = os.path.join(ALIGN_PATH, "{sample}_NoY.bam")
+    output:
+        r1 = os.path.join(OUTDIR, "fastq_NoY", "{sample}_R1.fastq.gz"),
+        r2 = os.path.join(OUTDIR, "fastq_NoY", "{sample}_R2.fastq.gz")
+    threads: 8
+    resources:
+        mem_mb = 12000,
+        runtime = 90
+    container: CONTAINER_IMAGE
+    shell:
+        """
+        mkdir -p {OUTDIR}/fastq_NoY
+        mkdir -p {OUTDIR}/tmp/{wildcards.sample}
+
+        samtools sort -n \
+            -@ {threads} \
+            -T {OUTDIR}/tmp/{wildcards.sample}/sort_tmp \
+            {input.bam} | \
+        samtools fastq -@ {threads} \
+            -1 {output.r1} \
+            -2 {output.r2} \
+            -0 /dev/null -s /dev/null -
+
+        # clean temp files
+        rm -rf {OUTDIR}/tmp/{wildcards.sample}
+        """
